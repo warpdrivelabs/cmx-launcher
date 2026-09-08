@@ -47,7 +47,7 @@ WORKSPACE = BASE_DIR.parent                          # 工作区根目录
 WEB_DIR = BASE_DIR / "web"
 STATE_FILE = BASE_DIR / "launcher_state.json"
 LOG_KEEP = 5000                                      # 每个服务内存日志保留行数
-SKIP_DIRS = {"cmx-launcher", "node_modules", "target", "docs", "documents", "packages"}
+SKIP_DIRS = {"cmx-launcher", "node_modules", "target", "docs", "documents", "packages", "crates", "dist"}
 
 IS_WIN = sys.platform == "win32"
 RE_BIN_NAME = re.compile(r'^name\s*=\s*"([^"]+)"', re.M)
@@ -71,8 +71,27 @@ _NODE_ALIAS = {
     "cmx-html-designer": "设计器 Designer"
 }
 
-_registry: dict[str, dict] = {}     # sid(仓目录名) -> {dir, bin, name, kind, script, port}
+_registry: dict[str, dict] = {}     # sid(仓目录名) -> {dir(相对工作区根), bin, name, kind, script, port}
 _reg_lock = threading.Lock()
+
+
+def _eligible_dir(p: Path) -> bool:
+    return p.is_dir() and not p.name.startswith(".") and p.name not in SKIP_DIRS
+
+
+def _iter_repo_dirs() -> list[Path]:
+    """枚举工作区内全部候选仓目录（绝对路径），逐层下钻、深度 ≤3，兼容三种布局：
+    根平铺 <root>/<repo>、分组两层 <root>/backend|frontend/<repo>、npm workspace 三层
+    <root>/frontend/<ws>/<pkg-app>。是否真是仓由调用方条件判定（Cargo.toml / package.json / target）。"""
+    frontier = [d for d in sorted(WORKSPACE.iterdir()) if _eligible_dir(d)]
+    found: list[Path] = []
+    for _ in range(3):
+        nxt: list[Path] = []
+        for d in frontier:
+            found.append(d)
+            nxt.extend(x for x in sorted(d.iterdir()) if _eligible_dir(x))
+        frontier = nxt
+    return found
 
 
 def _crates_of(repo: Path) -> list[Path]:
@@ -82,14 +101,17 @@ def _crates_of(repo: Path) -> list[Path]:
 
 
 def discover_services() -> dict[str, dict]:
-    """扫描工作区：
+    """扫描工作区（经 _iter_repo_dirs，兼容分组两层 / npm workspace 三层布局）：
     - Rust 服务：crate 名以 -server 结尾且含 src/main.rs → `cargo run -p <bin>`
     - 前端应用：package.json 有 dev 脚本引用 vite 且存在 vite.config.js → `npm run dev`
+    sid 取仓目录名（仓名全局唯一）；dir 为相对工作区根的 posix 路径。
     """
     found: dict[str, dict] = {}
-    for repo in sorted(WORKSPACE.iterdir()):
-        if not repo.is_dir() or repo.name.startswith(".") or repo.name in SKIP_DIRS:
+    for repo in _iter_repo_dirs():
+        if repo.name in found:
+            print(f"[discover] 忽略重复服务目录: {repo.relative_to(WORKSPACE).as_posix()}")
             continue
+        rel = repo.relative_to(WORKSPACE).as_posix()
         # --- Rust 服务 ---
         if (repo / "Cargo.toml").is_file():
             for crate in _crates_of(repo):
@@ -100,7 +122,7 @@ def discover_services() -> dict[str, dict]:
                 bin_name = m.group(1)
                 if bin_name.endswith("-server") and (crate / "src" / "main.rs").is_file():
                     found[repo.name] = {
-                        "dir": repo.name, "bin": bin_name, "kind": "rust",
+                        "dir": rel, "bin": bin_name, "kind": "rust",
                         "name": _NAME_ALIAS.get(bin_name, bin_name),
                         "script": None, "port": None,
                     }
@@ -120,13 +142,13 @@ def discover_services() -> dict[str, dict]:
             continue
         name = _NODE_ALIAS.get(meta.get("name", ""), meta.get("name", repo.name))
         found[repo.name] = {
-            "dir": repo.name, "bin": "npm run dev", "kind": "node",
+            "dir": rel, "bin": "npm run dev", "kind": "node",
             "name": name, "script": "dev", "port": 5173,
         }
     return found
 
 
-_disk_repos: list[str] = []         # 磁盘清理目标：所有含 target/ 的工作区子目录
+_disk_repos: list[str] = []         # 磁盘清理目标：所有含 target/ 的仓（相对工作区根的路径）
 
 
 def reload_registry():
@@ -134,8 +156,8 @@ def reload_registry():
     reg = discover_services()
     with _reg_lock:
         _registry = reg
-    _disk_repos = sorted(d.name for d in WORKSPACE.iterdir()
-                         if d.is_dir() and (d / "target").is_dir())
+    _disk_repos = sorted(p.relative_to(WORKSPACE).as_posix()
+                         for p in _iter_repo_dirs() if (p / "target").is_dir())
     return reg
 
 
@@ -808,7 +830,7 @@ def list_services():
     for it in items:
         sid = it["sid"]
         if it["status"] == "running" and _prev_status.get(sid) != "running":
-            threading.Thread(target=_scan_repo, args=(sid,), daemon=True).start()
+            threading.Thread(target=_scan_repo, args=(it["dir"],), daemon=True).start()
         _prev_status[sid] = it["status"]
     return {"services": items, "workspace": str(WORKSPACE)}
 
