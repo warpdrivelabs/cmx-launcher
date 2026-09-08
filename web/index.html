@@ -1,0 +1,926 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CMX 开发控制台</title>
+<style>
+/* ============================================================
+   CMX LAUNCHER · 夜间发射控制台
+   palette: midnight navy / instrument amber / phosphor green
+   ============================================================ */
+:root{
+  --bg:#0a0f1e; --bg-deep:#070b16; --panel:#101830; --panel2:#141d38;
+  --line:#22304f; --line-bright:#33477a;
+  --ink:#dbe4fa; --ink-dim:#7d8db3; --ink-faint:#4b5a7d;
+  --amber:#ffb454; --amber-deep:#e08f1f;
+  --green:#55e6a5; --red:#ff6b81; --violet:#a78bfa; --cyan:#5ad7ff;
+  --mono:"JetBrains Mono","Cascadia Code","Fira Code",ui-monospace,Consolas,"Courier New",monospace;
+  --sans:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scrollbar-color:var(--line) var(--bg-deep)}
+body{
+  background:
+    radial-gradient(1200px 600px at 75% -10%, rgba(90,120,220,.10), transparent 60%),
+    radial-gradient(900px 500px at 10% 110%, rgba(255,180,84,.05), transparent 55%),
+    var(--bg);
+  color:var(--ink); font:14px/1.5 var(--sans);
+  min-height:100vh; padding-bottom:300px;
+}
+/* 网格坐标纸底纹 + 扫描线 */
+body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
+  background:
+    repeating-linear-gradient(0deg, rgba(120,150,255,.028) 0 1px, transparent 1px 44px),
+    repeating-linear-gradient(90deg, rgba(120,150,255,.028) 0 1px, transparent 1px 44px);}
+body::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:90;
+  background:repeating-linear-gradient(0deg, rgba(255,255,255,.012) 0 1px, transparent 1px 3px);}
+::selection{background:rgba(255,180,84,.35)}
+button{font:600 12px var(--mono);letter-spacing:.06em;cursor:pointer;color:var(--ink);
+  background:linear-gradient(180deg,var(--panel2),var(--panel));border:1px solid var(--line-bright);
+  padding:6px 14px;border-radius:3px;transition:border-color .15s,color .15s,box-shadow .15s,transform .05s;
+  clip-path:polygon(0 0,calc(100% - 7px) 0,100% 7px,100% 100%,7px 100%,0 calc(100% - 7px));}
+button:hover:not(:disabled){border-color:var(--amber);color:var(--amber);box-shadow:0 0 10px rgba(255,180,84,.18)}
+button:active:not(:disabled){transform:translateY(1px)}
+button:disabled{opacity:.35;cursor:not-allowed}
+button.ignite{background:linear-gradient(180deg,#ffc46e,var(--amber-deep));border-color:var(--amber);color:#1a1206;
+  text-shadow:0 1px 0 rgba(255,255,255,.25)}
+button.ignite:hover:not(:disabled){box-shadow:0 0 14px rgba(255,180,84,.45);color:#1a1206;filter:brightness(1.06)}
+button.abort:hover:not(:disabled){border-color:var(--red);color:var(--red);box-shadow:0 0 10px rgba(255,107,129,.2)}
+button.ghost{background:transparent;border-color:var(--line);color:var(--ink-dim)}
+button.ghost:hover:not(:disabled){color:var(--amber)}
+input,select,textarea{font:13px var(--mono);background:var(--bg-deep);color:var(--ink);
+  border:1px solid var(--line);border-radius:3px;padding:5px 8px;outline:none;transition:border-color .15s,box-shadow .15s}
+input:focus,select:focus,textarea:focus{border-color:var(--amber);box-shadow:0 0 0 1px rgba(255,180,84,.25)}
+input:disabled,select:disabled{opacity:.45}
+label.eyebrow,.eyebrow{font:600 10px var(--mono);letter-spacing:.22em;color:var(--ink-faint);text-transform:uppercase}
+
+/* ================= 顶栏 ================= */
+header{position:relative;z-index:1;display:flex;align-items:center;gap:20px;
+  padding:10px 24px;background:linear-gradient(180deg,rgba(20,29,56,.92),rgba(16,24,48,.78));
+  border-bottom:1px solid var(--line-bright);box-shadow:0 1px 0 rgba(255,180,84,.08),0 8px 24px rgba(0,0,0,.35)}
+.brand{display:flex;align-items:baseline;gap:10px}
+.brand .mark{color:var(--amber);font:700 20px var(--mono);text-shadow:0 0 12px rgba(255,180,84,.6)}
+.brand h1{font:700 17px var(--mono);letter-spacing:.18em;color:var(--ink);white-space:nowrap}
+.brand h1 b{color:var(--amber);font-weight:700}
+.brand .sub{font:500 10px var(--mono);letter-spacing:.3em;color:var(--ink-faint)}
+.telemetry{margin-left:auto;display:flex;align-items:center;gap:24px}
+.sysline{display:flex;align-items:center;gap:8px}
+.sysline .eyebrow{width:38px;text-align:right;flex:none}
+.sysline b{font:600 12px var(--mono);color:var(--ink);white-space:nowrap;font-variant-numeric:tabular-nums;text-align:left}
+.sysline b.amber{color:var(--amber);text-shadow:0 0 12px rgba(255,180,84,.4);letter-spacing:.08em;font-size:16px}
+.tsep{width:1px;height:18px;background:var(--line-bright);flex:none}
+.mini-gauge{width:64px;height:7px;background:var(--bg-deep);border:1px solid var(--line-bright);border-radius:2px;overflow:hidden;flex:none}
+.mini-gauge i{display:block;height:100%;width:0%;background:var(--amber);transition:width .6s}
+.mini-gauge i.hot{background:var(--red)}
+.pm{font:10px var(--mono);color:var(--ink-faint);white-space:nowrap;letter-spacing:.02em}
+.scan-mini{font-size:10px;padding:2px 8px;flex:none}
+.ws{font:11px var(--mono);color:var(--ink-faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#disk-text{font:600 11px var(--mono);color:var(--ink-dim);letter-spacing:.04em}
+
+/* ================= 工具条 ================= */
+.toolbar{position:relative;z-index:1;display:flex;align-items:center;gap:12px;padding:14px 24px;flex-wrap:wrap}
+.chk{appearance:none;width:15px;height:15px;border:1px solid var(--line-bright);border-radius:2px;background:var(--bg-deep);
+  cursor:pointer;position:relative;flex:none;transition:all .15s}
+.chk:checked{background:var(--amber);border-color:var(--amber);box-shadow:0 0 8px rgba(255,180,84,.4)}
+.chk:checked::after{content:"✕";position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  color:#1a1206;font:700 10px var(--mono)}
+.toolbar .chk,.disktable .chk{margin:0}
+.toolbar label{display:flex;align-items:center;gap:8px;color:var(--ink-dim);cursor:pointer;user-select:none;
+  font:600 11px var(--mono);letter-spacing:.15em}
+.toolbar .spring{flex:1}
+/* 批量操作按钮：左侧意图色条 + 等宽大写字距，控制台分组风格 */
+.toolbar button{font:600 11px var(--mono);letter-spacing:.18em;padding:7px 16px 7px 15px;position:relative}
+.toolbar button:not(.ghost)::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:currentColor;opacity:.5;transition:opacity .15s}
+.toolbar button:not(.ghost):hover:not(:disabled)::before{opacity:1}
+.btn-bstart{color:var(--green);border-color:rgba(85,230,165,.4)}
+.btn-bstart:hover:not(:disabled){border-color:var(--green);color:var(--green);box-shadow:0 0 10px rgba(85,230,165,.22)}
+.btn-brestart{color:var(--amber)}
+.btn-bstop{color:var(--red);border-color:rgba(255,107,129,.4)}
+.btn-bstop:hover:not(:disabled){border-color:var(--red);color:var(--red);box-shadow:0 0 10px rgba(255,107,129,.22)}
+
+/* ================= 引擎 bay ================= */
+.grid{position:relative;z-index:1;display:grid;grid-template-columns:repeat(auto-fill,minmax(460px,1fr));gap:14px;padding:0 24px}
+.bay{--i:0;position:relative;background:linear-gradient(160deg,var(--panel2) 0%,var(--panel) 55%,#0d1428 100%);
+  border:1px solid var(--line);border-radius:4px;padding:14px 16px 12px;display:flex;flex-direction:column;gap:11px;
+  box-shadow:inset 0 1px 0 rgba(140,170,255,.06),0 4px 18px rgba(0,0,0,.3);
+  animation:bayin .45s cubic-bezier(.2,.7,.3,1) both;animation-delay:calc(var(--i)*70ms)}
+.bay::before,.bay::after{content:"";position:absolute;width:9px;height:9px;border:1px solid var(--line-bright);transition:border-color .2s}
+.bay::before{top:-1px;left:-1px;border-right:none;border-bottom:none}
+.bay::after{bottom:-1px;right:-1px;border-left:none;border-top:none}
+.bay:hover{border-color:var(--line-bright)}
+.bay:hover::before,.bay:hover::after{border-color:var(--amber)}
+@keyframes bayin{from{opacity:0;transform:translateY(10px)}}
+.bay-head{display:flex;align-items:center;gap:10px}
+.lamp{width:10px;height:10px;border-radius:50%;flex:none;background:#2a3654;transition:all .3s}
+.lamp.running{background:var(--green);box-shadow:0 0 8px var(--green),0 0 2px #fff inset}
+.lamp.starting{background:var(--amber);box-shadow:0 0 8px var(--amber);animation:pulse 1.6s ease-in-out infinite}
+.lamp.external{background:var(--violet);box-shadow:0 0 8px var(--violet)}
+.lamp.exited{background:var(--red);box-shadow:0 0 8px var(--red)}
+@keyframes pulse{50%{opacity:.35}}
+.bay-id{min-width:0;margin-right:auto}
+.bay-name{font:700 15px var(--sans);letter-spacing:.02em}
+.bay-sub{font:11px var(--mono);color:var(--ink-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:250px}
+.scope{flex:none;width:96px;height:30px;border:1px solid var(--line);border-radius:2px;background:
+  repeating-linear-gradient(90deg,rgba(120,150,255,.05) 0 1px,transparent 1px 8px),var(--bg-deep)}
+.state-chip{flex:none;font:700 10px var(--mono);letter-spacing:.16em;padding:3px 9px;border-radius:2px;border:1px solid}
+.state-chip.stopped{color:var(--ink-faint);border-color:var(--line);background:rgba(42,54,84,.2)}
+.state-chip.starting{color:var(--amber);border-color:var(--amber-deep);background:rgba(255,180,84,.08)}
+.state-chip.running{color:var(--green);border-color:#1f7a53;background:rgba(85,230,165,.08);box-shadow:0 0 8px rgba(85,230,165,.15)}
+.state-chip.external{color:var(--violet);border-color:#5b4a9e;background:rgba(167,139,250,.08)}
+.state-chip.exited{color:var(--red);border-color:#8f3a48;background:rgba(255,107,129,.08)}
+.bay-cfg{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 10px;background:rgba(7,11,22,.5);
+  border:1px dashed var(--line);border-radius:3px}
+.bay-cfg select{max-width:210px}
+.bay-cfg .args{flex:1;min-width:110px;font-size:12px}
+.bay-ops{display:flex;gap:8px;align-items:center}
+.bay-ops .spring{flex:1}
+
+/* ================= 磁盘区 ================= */
+.section-title{position:relative;z-index:1;display:flex;align-items:baseline;gap:14px;padding:26px 24px 10px}
+.section-title h2{font:700 13px var(--mono);letter-spacing:.24em;color:var(--ink)}
+.section-title h2::before{content:"◢ ";color:var(--amber)}
+.section-title .hint{font:11px var(--mono);color:var(--ink-faint)}
+.grp-head{position:relative;z-index:1;display:flex;align-items:center;gap:14px;padding:20px 24px 10px}
+.grp-head h2{font:700 13px var(--mono);letter-spacing:.24em;color:var(--ink)}
+.grp-head h2::before{content:"◢ ";color:var(--amber)}
+.grp-head .gcount{font:11px var(--mono);color:var(--ink-faint)}
+.grp-head label{display:flex;align-items:center;gap:8px;font:600 11px var(--mono);letter-spacing:.15em;
+  color:var(--ink-dim);cursor:pointer;user-select:none;margin-left:auto}
+.disktable{position:relative;z-index:1;margin:0 24px;background:var(--panel);border:1px solid var(--line);
+  border-radius:4px;overflow:hidden;box-shadow:0 4px 18px rgba(0,0,0,.3)}
+.disktable table{width:100%;border-collapse:collapse;font-size:12px}
+.disktable th{font:600 10px var(--mono);letter-spacing:.2em;text-transform:uppercase;color:var(--ink-faint);
+  text-align:left;padding:9px 16px;background:var(--bg-deep);border-bottom:1px solid var(--line)}
+.disktable td{padding:8px 16px;border-bottom:1px solid rgba(34,48,79,.55)}
+.disktable tr:last-child td{border-bottom:none}
+.disktable tbody tr{transition:background .15s}
+.disktable tbody tr:hover{background:rgba(255,180,84,.03)}
+.disktable .num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.repo-name{font:600 12px var(--mono);color:var(--ink)}
+.size-cell{display:flex;align-items:center;gap:10px}
+.size-cell .blocks{display:flex;gap:2px}
+.size-cell .blocks i{width:4px;height:10px;background:var(--line);border-radius:1px}
+.size-cell .blocks i.on{background:var(--amber);box-shadow:0 0 3px rgba(255,180,84,.4)}
+.size-cell .blocks i.on.hot{background:var(--red);box-shadow:0 0 3px rgba(255,107,129,.5)}
+.st-warn{color:var(--amber);font:11px var(--mono)}
+.st-dim{color:var(--ink-faint);font:11px var(--mono)}
+.clean-btn{font-size:11px;padding:6px 14px}
+#sudo .box input{width:100%;margin:14px 0 2px;font-size:13px}
+footnote{position:relative;z-index:1;display:block;padding:10px 24px;color:var(--ink-faint);font:11px var(--mono)}
+footnote code{color:var(--ink-dim)}
+
+/* ================= 日志抽屉 ================= */
+#drawer{position:fixed;left:0;right:0;bottom:0;height:300px;display:none;flex-direction:column;z-index:60;
+  background:linear-gradient(180deg,var(--panel),var(--bg-deep));border-top:1px solid var(--amber-deep);
+  box-shadow:0 -12px 40px rgba(0,0,0,.55)}
+#drawer.open{display:flex}
+/* 顶部拖拽夹持条：按住上下拖动调节抽屉高度（localStorage 记忆，双击复位） */
+#drawer .grip{flex:none;height:5px;margin-top:-1px;cursor:ns-resize;position:relative}
+#drawer .grip::after{content:"";position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+  width:36px;height:2px;border-radius:1px;background:var(--line);transition:background .15s,width .15s}
+#drawer .grip:hover::after,#drawer .grip.drag::after{background:var(--amber);width:56px}
+#drawer .dhead{display:flex;align-items:flex-end;gap:10px;height:35px;padding:8px 12px 0}
+/* 全部关闭：与 tab 同为 27px 固定高、同 padding、同底边对齐；clip-path:none 覆盖全局 button 切角，避免底部被裁 */
+#drawer .close-all{flex:none;height:27px;display:inline-flex;align-items:center;justify-content:center;
+  font:600 11px var(--mono);letter-spacing:.1em;color:var(--ink-dim);
+  background:var(--bg-deep);border:1px solid var(--line);border-radius:3px;
+  padding:0 14px;clip-path:none;cursor:pointer;
+  transition:color .15s,border-color .15s,box-shadow .15s}
+#drawer .close-all:hover{color:var(--red);border-color:var(--red);box-shadow:0 0 8px rgba(255,107,129,.2)}
+#drawer .dtabs{display:flex;gap:3px;padding:0;overflow-x:auto;scrollbar-width:thin}
+#drawer .tab{height:27px;display:inline-flex;align-items:center;padding:0 14px;border:1px solid var(--line);border-bottom:none;
+  border-radius:3px 3px 0 0;cursor:pointer;
+  color:var(--ink-dim);white-space:nowrap;font:600 11px var(--mono);letter-spacing:.1em;background:var(--bg-deep);transition:color .15s}
+#drawer .tab.active{background:var(--panel);color:var(--amber);border-color:var(--amber-deep);
+  box-shadow:0 -3px 12px rgba(255,180,84,.12)}
+/* 日志控制台右键菜单 */
+#logctx{position:fixed;z-index:80;display:none;min-width:140px;padding:4px;
+  background:var(--panel);border:1px solid var(--line-bright);border-radius:4px;
+  box-shadow:0 8px 24px rgba(0,0,0,.5)}
+#logctx.show{display:block}
+#logctx .item{display:flex;align-items:center;gap:7px;padding:6px 10px;border-radius:3px;cursor:pointer;
+  font:12px var(--sans);color:var(--ink);white-space:nowrap}
+#logctx .item:hover{background:rgba(255,180,84,.12);color:var(--amber)}
+#logctx .item .k{margin-left:auto;font:10px var(--mono);color:var(--ink-faint)}
+#drawer .tab .x{display:inline-block;margin-left:8px;opacity:.55;vertical-align:middle;transform:translateY(-1px)}
+#drawer .tab .x:hover{opacity:1;color:var(--red)}
+#drawer .body{flex:1;overflow:auto;background:var(--bg-deep);font:12px/1.55 var(--mono);padding:10px 16px}
+#drawer .ln{white-space:pre-wrap;word-break:break-all;color:#9fb2d8}
+#drawer .ln .ts{color:var(--ink-faint);margin-right:10px}
+/* 抽屉打开时页面底部让位，避免内容被固定抽屉遮挡 */
+body.drawer-open{padding-bottom:315px}
+#drawer .ln.err{color:var(--red)}
+#drawer .ln.warn{color:var(--amber)}
+#drawer .empty{color:var(--ink-faint);padding:24px;font:12px var(--mono);letter-spacing:.1em}
+#dbottom{position:absolute;right:20px;bottom:16px;z-index:5;display:none;align-items:center;gap:5px;
+  width:38px;height:38px;justify-content:center;font:700 16px var(--mono);color:#1a1206;
+  background:linear-gradient(180deg,#ffc46e,var(--amber-deep));border:1px solid var(--amber);
+  border-radius:50%;cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,.5),0 0 12px rgba(255,180,84,.35);
+  transition:transform .15s,box-shadow .15s}
+#dbottom.show{display:flex}
+#dbottom:hover{transform:translateY(-2px);box-shadow:0 6px 18px rgba(0,0,0,.55),0 0 16px rgba(255,180,84,.5)}
+#dbottom .n{display:none;font:700 10px var(--mono);letter-spacing:0}
+#dbottom.hasnew .n{display:inline}
+#dbottom.hasnew{width:auto;min-width:38px;padding:0 12px;border-radius:19px}
+
+/* ================= toast ================= */
+#toasts{position:fixed;top:18px;right:18px;z-index:99;display:flex;flex-direction:column;gap:8px}
+.toast{font:600 12px var(--mono);letter-spacing:.03em;background:var(--panel);border:1px solid var(--line-bright);
+  border-left:3px solid var(--amber);border-radius:3px;padding:10px 16px;min-width:260px;max-width:440px;
+  box-shadow:0 6px 24px rgba(0,0,0,.5);animation:slidein .25s cubic-bezier(.2,.7,.3,1)}
+.toast.err{border-left-color:var(--red)}
+.toast.ok{border-left-color:var(--green)}
+@keyframes slidein{from{transform:translateX(36px);opacity:0}}
+
+/* ================= modal ================= */
+.modal{position:fixed;inset:0;background:rgba(4,7,14,.72);backdrop-filter:blur(3px);display:none;
+  align-items:center;justify-content:center;z-index:80}
+.modal.open{display:flex}
+.modal .box{background:linear-gradient(170deg,var(--panel2),var(--panel));border:1px solid var(--line-bright);
+  border-radius:5px;width:min(780px,92vw);display:flex;flex-direction:column;max-height:86vh;
+  box-shadow:0 0 0 1px rgba(255,180,84,.08),0 24px 80px rgba(0,0,0,.6);
+  clip-path:polygon(0 0,calc(100% - 14px) 0,100% 14px,100% 100%,14px 100%,0 calc(100% - 14px))}
+.modal .mhead{display:flex;align-items:center;gap:12px;padding:14px 20px;border-bottom:1px solid var(--line)}
+.modal .mhead .t{font:700 13px var(--mono);letter-spacing:.14em;color:var(--amber)}
+.modal .mhead .x{margin-left:auto;cursor:pointer;color:var(--ink-faint);font:16px var(--mono);padding:2px 6px}
+.modal .mhead .x:hover{color:var(--red)}
+.modal textarea{flex:1;margin:16px 20px;font:12px/1.6 var(--mono);min-height:340px;resize:vertical;
+  white-space:pre;overflow:auto;background:var(--bg-deep)}
+.modal .mfoot{display:flex;gap:10px;padding:0 20px 18px;justify-content:flex-end}
+#confirm .box{width:min(460px,92vw)}
+#confirm .msg{padding:22px 22px 8px;font:13px/1.7 var(--sans);color:var(--ink);white-space:pre-wrap}
+#confirm .mfoot{padding-top:14px}
+
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation:none!important;transition:none!important}
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <span class="mark">◢</span>
+    <h1>CMX<b>开发控制台</b></h1>
+    <span class="sub">研发服务控制台 · DEV MISSION CONSOLE</span>
+  </div>
+  <div class="telemetry">
+    <div class="sysline"><span class="eyebrow">TIME</span><b id="clock" class="amber">--:--:--</b></div>
+    <span class="tsep"></span>
+    <div class="sysline"><span class="eyebrow">CPU</span><div class="mini-gauge"><i id="g-cpu"></i></div><b id="t-cpu"> --</b></div>
+    <div class="sysline"><span class="eyebrow">MEM</span><div class="mini-gauge"><i id="g-mem"></i></div><b id="t-mem"> --</b></div>
+    <div class="sysline"><span class="eyebrow">DISK</span><div class="mini-gauge"><i id="g-disk"></i></div><b id="disk-text"> --</b>
+      <button class="ghost scan-mini" onclick="openDiskScan()">扫描</button></div>
+  </div>
+</header>
+
+<div class="toolbar">
+  <label><input type="checkbox" class="chk" id="chk-all" onchange="toggleAll()"> SELECT ALL · 全选</label>
+  <button class="btn-bstart" onclick="batchStart()">▶ 启动选中</button>
+  <button class="btn-brestart" onclick="batchRestart()">↻ 重启选中</button>
+  <button class="btn-bstop" onclick="batchStop()">■ 停止选中</button>
+  <span class="spring"></span>
+  <span class="ws" id="ws-path"></span>
+  <button class="ghost" onclick="rescan()">↻ 重新扫描服务</button>
+</div>
+
+<div id="services"></div>
+
+<div class="section-title">
+  <h2>TARGET 磁盘占用</h2>
+  <span class="hint">自动扫描 · 10 分钟缓存 · 运行中的服务需先停止才能清理</span>
+  <span style="flex:1"></span>
+  <button class="btn-bstop clean-btn" onclick="cleanSelectedDisk()">🗑 清理选中</button>
+</div>
+<div class="disktable">
+  <table>
+    <thead><tr>
+      <th style="width:34px"><input type="checkbox" class="chk" id="chk-disk-all" onchange="toggleDiskAll()"></th>
+      <th>仓库 REPO</th><th>占用 USAGE</th><th>扫描时间 SCANNED</th><th>状态 STATUS</th><th style="width:110px"></th>
+    </tr></thead>
+    <tbody id="disk-body"></tbody>
+  </table>
+</div>
+<footnote>清理 = 删除 <code>target/</code> 目录，下次构建将全量重编译。</footnote>
+
+<div id="drawer">
+  <div class="grip" id="dgrip" title="拖动调节高度 · 双击复位"></div>
+  <div class="dhead">
+    <button class="close-all" onclick="closeAllTabs()">✕ 全部关闭</button>
+    <div class="dtabs" id="dtabs"></div>
+  </div>
+  <div class="body" id="dbody"><div class="empty">// 选择一个服务的「日志」开始监控输出</div></div>
+  <button id="dbottom" onclick="scrollLogBottom()" title="滚动到最新">↓<span class="n"></span></button>
+</div>
+<div id="logctx">
+  <div class="item" id="logctx-clear">🧹 清除日志<span class="k">仅清缓冲 · 进程不受影响</span></div>
+</div>
+
+<div class="modal" id="modal">
+  <div class="box">
+    <div class="mhead"><span class="t" id="m-title"></span><span class="x" onclick="closeModal()">✕</span></div>
+    <textarea id="m-text" spellcheck="false"></textarea>
+    <div class="mfoot">
+      <button class="ghost" onclick="closeModal()">取消</button>
+      <button class="ignite" onclick="saveEnv()">保存 .env</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="confirm">
+  <div class="box">
+    <div class="mhead"><span class="t">⚠ 操作确认</span><span class="x" onclick="resolveConfirm(false)">✕</span></div>
+    <div class="msg" id="confirm-msg"></div>
+    <div class="mfoot">
+      <button class="ghost" onclick="resolveConfirm(false)">取消</button>
+      <button class="abort" id="confirm-ok" onclick="resolveConfirm(true)">确认执行</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="sudo">
+  <div class="box">
+    <div class="mhead"><span class="t">🔑 需要提权</span><span class="x" onclick="resolveSudo(null)">✕</span></div>
+    <div class="msg" id="sudo-msg"></div>
+    <input type="password" id="sudo-pw" placeholder="sudo 密码（仅用于本次终止进程，不保存不上报）" autocomplete="off">
+    <div class="mfoot">
+      <button class="ghost" onclick="resolveSudo(null)">取消</button>
+      <button class="ignite" onclick="resolveSudo()">授权执行</button>
+    </div>
+  </div>
+</div>
+
+<div id="toasts"></div>
+
+<script>
+/* ================================================================
+   CMX LAUNCHER 前端逻辑
+   ================================================================ */
+const S = { services: [], tomls: {}, disks: null, tabs: [], activeTab: null,
+            cursors: {}, autoscroll: true, renderKey: '', scope: {} };
+/* 与后端 CLEAN_SID 对应：cargo clean 伪服务的日志 tab id */
+const CLEAN_SID = '__clean__';
+
+const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;');
+/* 属性值转义：额外处理双引号，避免用户输入（如 ARGS）破坏 HTML 属性 */
+const escAttr = s => esc(String(s ?? '')).replace(/"/g,'&quot;');
+/* ANSI SGR → 彩色 HTML（cargo --color always 输出还原终端配色） */
+const ANSI_FG = {30:'#51597a',31:'#ff6b81',32:'#55e6a5',33:'#ffb454',34:'#5ad7ff',35:'#a78bfa',36:'#5ad7ff',37:'#dbe4fa',
+                 90:'#7d8db3',91:'#ff8fa0',92:'#8cf5c0',93:'#ffc97e',94:'#8fdcff',95:'#c4b2ff',96:'#8fdcff',97:'#ffffff'};
+function ansiToHtml(raw){
+  // 去掉光标移动等非颜色序列，保留 SGR(m)
+  let s = raw.replace(/\x1b\[[0-9;?]*[A-LN-Za-z]/g, m => m.endsWith('m') ? m : '');
+  let fg=null, bold=false, dim=false, ul=false, spanOpen=false, out='';
+  const apply = () => {
+    if(spanOpen){ out+='</span>'; spanOpen=false; }
+    if(fg===null && !bold && !dim && !ul) return;
+    let st='';
+    if(bold) st+='font-weight:700;';
+    if(dim) st+='opacity:.55;';
+    if(ul) st+='text-decoration:underline;';
+    const c = fg!=null ? ANSI_FG[fg] : null;
+    if(c) st+=`color:${c};`;
+    if(st){ out+=`<span style="${st}">`; spanOpen=true; }
+  };
+  const parts = s.split(/\x1b\[([0-9;]*)m/);
+  for(let i=0;i<parts.length;i++){
+    if(i%2===1){
+      const codes = parts[i]==='' ? [0] : parts[i].split(';').map(x=>parseInt(x||'0',10));
+      for(let j=0;j<codes.length;j++){
+        const c = codes[j];
+        if(c===0){ fg=null; bold=dim=ul=false; }
+        else if(c===1) bold=true;
+        else if(c===2) dim=true;
+        else if(c===3) {}      // 斜体忽略
+        else if(c===4) ul=true;
+        else if(c===22){ bold=false; dim=false; }
+        else if(c===24) ul=false;
+        else if(c===39) fg=null;
+        else if((c>=30&&c<=37)||(c>=90&&c<=97)) fg=c;
+        else if(c===38||c===48) j+=2;   // 256色/RGB：跳过参数（粗略处理）
+      }
+    } else if(parts[i]){
+      apply(); out+=esc(parts[i]);
+    }
+  }
+  if(spanOpen) out+='</span>';
+  return out;
+}
+const fmtSize = b => { if(b==null) return '--'; const u=['B','KB','MB','GB','TB']; let i=0;
+  while(b>=1024&&i<u.length-1){b/=1024;i++} return b.toFixed(b>=100||i===0?0:1)+' '+u[i]; };
+const fmtTime = ts => ts? new Date(ts*1000).toLocaleTimeString('zh-CN',{hour12:false}) : '--';
+const fmtUp = s => { if(!s) return ''; const h=Math.floor(s/3600),m=Math.floor(s%3600/60);
+  return h?`${h}h ${m}m`:`${m}m ${String(s%60).padStart(2,'0')}s`; };
+const CHIP = {stopped:'待命', starting:'启动中', running:'运行中', external:'外部运行', exited:'已退出'};
+
+function toast(msg, cls=''){ const t=document.createElement('div'); t.className='toast '+cls; t.textContent=msg;
+  document.getElementById('toasts').appendChild(t); setTimeout(()=>t.remove(), 4200); }
+
+async function api(path, opts){ const r = await fetch(path, opts);
+  if(!r.ok){ let d=''; try{ d=(await r.json()).detail }catch(e){}
+    if(d && typeof d==='object'){ const err=new Error(d.message||'操作失败'); err.needAuth=!!d.need_auth; throw err; }
+    throw new Error((typeof d==='string'?d:'')||r.statusText); }
+  return r.json(); }
+
+/* ---------- 时钟 ---------- */
+setInterval(()=>{ document.getElementById('clock').textContent =
+  new Date().toLocaleTimeString('zh-CN',{hour12:false}); }, 1000);
+
+/* ---------- 服务加载与渲染 ---------- */
+async function loadServices(){
+  try{
+    const d = await api('/api/services');
+    S.services = d.services;
+    document.getElementById('ws-path').textContent = d.workspace;
+    // 未缓存的 tomls 并行拉取（首次加载 / 重新扫描后）
+    await Promise.all(d.services.filter(s=>!S.tomls[s.sid]).map(async s=>{
+      try{ S.tomls[s.sid] = (await api(`/api/services/${s.sid}/tomls`)).tomls; }
+      catch(e){ S.tomls[s.sid] = []; }
+    }));
+    // 仅结构性字段变化才整块重绘（uptime 每秒都变，只原地更新文本，避免反复重播入场动画导致闪烁）
+    const key = JSON.stringify([d.services.map(s=>[s.sid,s.status,s.pid,s.exit_code,s.toml,s.args,s.env_config_file,s.port]), S.tomls]);
+    if(key !== S.renderKey){ S.renderKey = key; render(); }
+    patchLive();
+  }catch(e){ toast('加载服务状态失败: '+e.message,'err'); }
+}
+
+function render(){
+  const rust = S.services.filter(s=>s.kind==='rust');
+  const node = S.services.filter(s=>s.kind==='node');
+  const grp = (title, list, kind) => !list.length ? '' : `
+    <div class="grp-head">
+      <h2>${title}</h2><span class="gcount">${list.length} 个</span>
+      <label><input type="checkbox" class="chk grp-all" data-kind="${kind}" onchange="toggleGroup('${kind}',this.checked)"> 全选</label>
+    </div>
+    <div class="grid">${list.map((s,i)=>bayHTML(s,i)).join('')}</div>`;
+  document.getElementById('services').innerHTML =
+    grp('后端服务 BACKEND', rust, 'rust') + grp('前端应用 FRONTEND', node, 'node');
+  S.services.forEach(s => initScope(s.sid));
+}
+function toggleGroup(kind, v){
+  document.querySelectorAll(`.bay[data-kind="${kind}"] .chk-svc`).forEach(c=>c.checked=v);
+}
+
+function bayHTML(s, i){
+  const st = s.status;
+  const chip = st==='exited' ? `${CHIP.exited} ${s.exit_code ?? '?'}` : CHIP[st];
+  const sub = subText(s);
+  const tomls = S.tomls[s.sid] || [];
+  const opts = ['<option value="">跟随 .env'+(s.env_config_file?` (${s.env_config_file})`:'')+'</option>']
+    .concat(tomls.map(t=>`<option value="${t}" ${s.toml===t?'selected':''}>${t}</option>`)).join('');
+  const lockCfg = st==='running'||st==='starting';
+  const cfgRow = s.kind==='node'
+    ? `<span class="eyebrow">ARGS</span>
+       <input class="args" data-sid="${s.sid}" placeholder="vite 附加参数，如 --mode docker" value="${s.args||''}" ${lockCfg?'disabled':''}>`
+    : `<span class="eyebrow">CFG</span>
+       <select class="toml" data-sid="${s.sid}" ${lockCfg?'disabled':''}>${opts}</select>
+       <span class="eyebrow">ARGS</span>
+       <input class="args" data-sid="${s.sid}" placeholder="如 --release" value="${s.args||''}" ${lockCfg?'disabled':''}>`;
+  const openBtn = (s.kind==='node' && s.url && (st==='running'||st==='external'))
+    ? `<button class="ghost" onclick="window.open('${s.url}','_blank')">↗ 打开</button>` : '';
+  return `<div class="bay" data-sid="${s.sid}" data-kind="${s.kind}" style="--i:${i}">
+    <div class="bay-head">
+      <input type="checkbox" class="chk chk-svc" data-sid="${s.sid}">
+      <span class="lamp ${st}"></span>
+      <div class="bay-id">
+        <div class="bay-name">${s.name}</div>
+        <div class="bay-sub" title="${escAttr(sub)}">${escAttr(sub)}${s.port?` · :${s.port}`:''}</div>
+      </div>
+      <canvas class="scope" id="scope-${s.sid}" width="96" height="30" title="日志输出活动"></canvas>
+      <span class="pm" id="pm-${s.sid}" title="进程树 CPU / 内存占用"></span>
+      <span class="state-chip ${st}">${chip}</span>
+    </div>
+    <div class="bay-cfg">${cfgRow}</div>
+    <div class="bay-ops">
+      <button class="ignite" onclick="start('${s.sid}')" ${s.running?'disabled':''}>▶ 启动</button>
+      <button class="abort" onclick="stop('${s.sid}')" ${s.running?'':'disabled'}>■ 停止</button>
+      <button onclick="restart('${s.sid}')" ${st==='stopped'?'disabled':''}>↻ 重启</button>
+      <span class="spring"></span>
+      ${openBtn}
+      <button class="ghost" onclick="showEnv('${s.sid}')">.env</button>
+      <button class="ghost" onclick="openLog('${s.sid}')">日志 ▸</button>
+    </div>
+  </div>`;
+}
+
+function subText(s){
+  return [s.bin, s.pid?`pid ${s.pid}`:null, s.uptime?fmtUp(s.uptime):null,
+          s.exit_code!=null&&s.status!=='running'&&s.status!=='starting'?`exit ${s.exit_code}`:null]
+         .filter(Boolean).join(' · ') + (s.port?` · :${s.port}`:'');
+}
+function patchLive(){
+  for(const s of S.services){
+    const bay = document.querySelector(`.bay[data-sid="${s.sid}"]`);
+    if(!bay) continue;
+    const sub = bay.querySelector('.bay-sub');
+    const txt = subText(s);
+    if(sub && sub.textContent !== txt) sub.textContent = txt;
+  }
+}
+
+function selectedSids(){ return [...document.querySelectorAll('.chk-svc:checked')].map(c=>c.dataset.sid); }
+function toggleAll(){ const v=document.getElementById('chk-all').checked;
+  document.querySelectorAll('.chk-svc').forEach(c=>c.checked=v); }
+function toggleDiskAll(){ const v=document.getElementById('chk-disk-all').checked;
+  document.querySelectorAll('#disk-body .dchk').forEach(c=>c.checked=v); }
+
+/* ---------- 操作 ---------- */
+function bodyOf(sid){
+  const bay = document.querySelector(`.bay[data-sid="${sid}"]`);
+  return { toml: bay?.querySelector('.toml')?.value || null, args: bay?.querySelector('.args')?.value || '' };
+}
+async function start(sid){ try{ await api(`/api/services/${sid}/start`,{method:'POST',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify(bodyOf(sid))});
+    toast(`已点火 ${sid}，编译需要一些时间`,'ok'); openLog(sid); }catch(e){ toast(e.message,'err'); } loadServices(); }
+async function postJson(path, body){ return api(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})}); }
+/* need_auth 错误 → 弹 sudo 密码框 → 带密码重试一次 */
+async function withSudoRetry(path, err){
+  if(!err.needAuth) throw err;
+  const pw = await askSudo(err.message);
+  if(pw==null) throw new Error('已取消提权');
+  return postJson(path, {sudo_password:pw});
+}
+async function stop(sid){
+  try{ await postJson(`/api/services/${sid}/stop`); toast(`已停止 ${sid}`,'ok'); }
+  catch(e){
+    try{ await withSudoRetry(`/api/services/${sid}/stop`, e); toast(`已停止 ${sid}（提权）`,'ok'); }
+    catch(e2){ toast(e2.message,'err'); } }
+  loadServices(); }
+async function restart(sid){
+  try{ await postJson(`/api/services/${sid}/restart`); toast(`正在重启 ${sid}`,'ok'); openLog(sid); }
+  catch(e){
+    try{ await withSudoRetry(`/api/services/${sid}/restart`, e); toast(`正在重启 ${sid}（提权）`,'ok'); openLog(sid); }
+    catch(e2){ toast(e2.message,'err'); } }
+  loadServices(); }
+/* 批量结果统一汇总：统计 ok/跳过 数并 toast（skipNote 附加跳过原因） */
+function summarizeBatch(verb, r, skipNote=''){
+  const res = Object.values(r.results||{});
+  const okN = res.filter(x=>x.ok).length, skip = res.length-okN;
+  toast(`${verb} ${okN} 个服务${skip?`，跳过 ${skip} 个${skipNote?`（${skipNote}）`:''}`:''}`, 'ok');
+}
+async function batchStart(){ const sids=selectedSids(); if(!sids.length) return toast('请先勾选服务');
+  try{ const r=await postJson('/api/batch/start',{sids});
+    summarizeBatch('已启动', r, '运行中/端口占用'); sids.forEach(openLog);
+  }catch(e){ toast(e.message,'err'); } loadServices(); }
+async function batchRestart(){ const sids=selectedSids(); if(!sids.length) return toast('请先勾选服务');
+  try{ const r=await postJson('/api/batch/restart',{sids});
+    await retryBatchSudo('/api/batch/restart', r);
+    summarizeBatch('已重启', r); sids.forEach(openLog);
+  }catch(e){ toast(e.message,'err'); } loadServices(); }
+async function batchStop(){ const sids=selectedSids(); if(!sids.length) return toast('请先勾选服务');
+  try{ const r=await postJson('/api/batch/stop',{sids});
+    await retryBatchSudo('/api/batch/stop', r);
+    summarizeBatch('已停止', r);
+  }catch(e){ toast(e.message,'err'); } loadServices(); }
+/* 批量操作：对 need_auth 失败项收集后弹框一次，带密码重试这些项并合并结果 */
+async function retryBatchSudo(path, r){
+  const need = Object.entries(r.results||{}).filter(([,x])=>x.error && x.error.need_auth);
+  if(!need.length) return;
+  const pw = await askSudo(need[0][1].error.message);
+  if(pw==null){ need.forEach(([s,x])=>{ x.ok=false; x.error='已取消提权'; }); return; }
+  const r2 = await postJson(path, {sids: need.map(([s])=>s), sudo_password: pw});
+  Object.assign(r.results, r2.results);
+}
+async function rescan(){ try{ const r=await api('/api/rescan',{method:'POST'}); S.tomls={}; S.renderKey='';
+    toast('已重新扫描: '+r.services.join('、'),'ok'); }catch(e){ toast(e.message,'err'); } loadServices(); }
+
+/* ---------- .env 编辑 ---------- */
+let envSid = null;
+async function showEnv(sid){
+  try{
+    const d = await api(`/api/services/${sid}/env`);
+    envSid = sid;
+    document.getElementById('m-title').textContent = `${sid} / .env`;
+    document.getElementById('m-text').value = d.raw;
+    document.getElementById('modal').classList.add('open');
+  }catch(e){ toast(e.message,'err'); }
+}
+async function saveEnv(){
+  try{
+    await api(`/api/services/${envSid}/env`,{method:'PUT',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({raw:document.getElementById('m-text').value})});
+    toast('.env 已保存','ok'); closeModal(); loadServices();
+  }catch(e){ toast(e.message,'err'); }
+}
+function closeModal(){ document.getElementById('modal').classList.remove('open'); envSid=null; }
+
+/* ---------- 确认弹窗 ---------- */
+let confirmResolve = null;
+function askConfirm(msg){
+  document.getElementById('confirm-msg').textContent = msg;
+  document.getElementById('confirm').classList.add('open');
+  return new Promise(res => confirmResolve = res);
+}
+function resolveConfirm(v){ document.getElementById('confirm').classList.remove('open');
+  confirmResolve && confirmResolve(v); confirmResolve = null; }
+document.addEventListener('keydown', e=>{
+  const c = document.getElementById('confirm');
+  if(!c.classList.contains('open')) return;
+  if(e.key==='Enter') resolveConfirm(true);
+  if(e.key==='Escape') resolveConfirm(false);
+});
+
+/* ---------- sudo 提权弹窗 ---------- */
+let sudoResolve = null;
+function askSudo(reason){
+  document.getElementById('sudo-msg').textContent = reason || '该进程归属其他用户，需要提权终止';
+  const inp = document.getElementById('sudo-pw');
+  inp.value = '';
+  document.getElementById('sudo').classList.add('open');
+  setTimeout(()=>inp.focus(), 50);
+  return new Promise(res => sudoResolve = res);
+}
+function resolveSudo(v){
+  document.getElementById('sudo').classList.remove('open');
+  const pw = v === undefined ? document.getElementById('sudo-pw').value : null;
+  if(pw !== null && !pw){ toast('密码为空，已取消', 'err'); return resolveSudo(null); }
+  sudoResolve && sudoResolve(pw); sudoResolve = null;
+}
+document.getElementById('sudo-pw').addEventListener('keydown', e=>{
+  if(e.key==='Enter') resolveSudo();
+  if(e.key==='Escape') resolveSudo(null);
+});
+
+/* ---------- 日志抽屉 + 示波器数据源 ---------- */
+function openLog(sid){
+  if(!S.tabs.includes(sid)) S.tabs.push(sid);
+  S.activeTab = sid;
+  document.getElementById('drawer').classList.add('open');
+  renderTabs(); connectStream(sid);
+}
+function closeTab(sid){
+  S.tabs = S.tabs.filter(t=>t!==sid);
+  if(S.activeTab===sid){ S.activeTab = S.tabs[0]||null; if(S.activeTab) connectStream(S.activeTab); }
+  if(!S.tabs.length) closeAllTabs();
+  renderTabs();
+}
+function closeAllTabs(){
+  S.tabs = []; S.activeTab = null;
+  if(es){ es.close(); es = null; }        // 断开 SSE，停止接收所有日志
+  document.getElementById('drawer').classList.remove('open');
+  document.getElementById('dbody').innerHTML = '<div class="empty">// 已停止接收日志 · 选择一个服务的「日志」开始监控输出</div>';
+  renderTabs();
+}
+function renderTabs(){
+  const label = t => t===CLEAN_SID ? '◤ target 清理' : t;
+  document.getElementById('dtabs').innerHTML = S.tabs.map(t=>
+    `<div class="tab ${t===S.activeTab?'active':''}" onclick="switchTab('${t}')">${label(t)}<span class="x" onclick="event.stopPropagation();closeTab('${t}')">✕</span></div>`).join('');
+}
+function switchTab(sid){ S.activeTab=sid; renderTabs(); connectStream(sid); }
+
+let es = null;
+function connectStream(sid){
+  if(es) es.close();
+  const body = document.getElementById('dbody');
+  // 打开/切换 tab 一律从头拉取该服务完整日志缓冲（服务端保留最近 5000 行）：
+  // 切换时若不重拉，body 会残留上一个 tab 的内容，看起来就是“日志串台”
+  S.cursors[sid] = 0;
+  body.innerHTML = '<div class="empty">// 等待输出…</div>';
+  S.hiddenCount = 0; updateDbottom();
+  const source = new EventSource(`/api/services/${sid}/logs/stream?since=0`);
+  es = source;
+  let sawAlive = false;   // 本次连接中是否见过进程存活（区分“回看已结束进程”与“亲眼看到结束”）
+  source.onmessage = ev => {
+    if(source !== es) return;   // 已切走：丢弃迟到消息，防止内容串台
+    const d = JSON.parse(ev.data);
+    if(d.running) sawAlive = true;
+    const fresh = d.lines.filter(l=>l.seq > (S.cursors[sid]||0));   // 防重放兜底
+    if(fresh.length){
+      const empty = body.querySelector('.empty'); if(empty) empty.remove();
+      bumpScope(sid, fresh.length);
+      const frag = document.createElement('div');
+      frag.innerHTML = fresh.map(l=>{
+        const bare = l.text.replace(/\x1b\[[0-9;?]*[A-Za-z]/g,'');
+        const isErr = /panic|ERROR/i.test(bare), isWarn = /WARN/i.test(bare);
+        const cls = isErr?'ln err':isWarn?'ln warn':'ln';
+        return `<div class="${cls}"><span class="ts">${fmtTime(l.ts)}</span>${ansiToHtml(l.text)}</div>`;
+      }).join('');
+      body.appendChild(frag);
+      while(body.childElementCount > 5000) body.firstChild.remove();
+      // 底部 → 实时自动滚动；用户上翻查看 → 暂停跟随，累计新行数提示
+      if(S.autoscroll) body.scrollTop = body.scrollHeight;
+      else { S.hiddenCount = (S.hiddenCount||0) + fresh.length; updateDbottom(); }
+    }
+    S.cursors[sid] = d.cursor;
+    if(d.closed){
+      // 流已结束：主动关闭 EventSource，防止其自动重连重放全部日志
+      source.close();
+      if(es === source) es = null;
+      if(!d.silent && sawAlive) toast(`服务 ${sid} 进程已结束`,'');
+    }
+  };
+}
+function updateDbottom(){
+  const btn = document.getElementById('dbottom');
+  if(!btn) return;
+  const off = !S.autoscroll && document.getElementById('drawer').classList.contains('open');
+  btn.classList.toggle('show', off);
+  const n = S.hiddenCount||0;
+  btn.querySelector('.n').textContent = n ? (n>999 ? '999+' : '+'+n) : '';
+  btn.classList.toggle('hasnew', n>0);
+}
+function scrollLogBottom(){
+  const body = document.getElementById('dbody');
+  body.scrollTop = body.scrollHeight;
+  S.autoscroll = true; S.hiddenCount = 0; updateDbottom();
+}
+document.getElementById('dbody').addEventListener('scroll', e=>{
+  const t = e.target;
+  S.autoscroll = t.scrollTop + t.clientHeight >= t.scrollHeight - 40;
+  if(S.autoscroll) S.hiddenCount = 0;
+  updateDbottom();
+});
+
+/* ---------- 示波器（真实日志吞吐驱动） ---------- */
+function initScope(sid){
+  if(!S.scope[sid]) S.scope[sid] = { hist: new Array(48).fill(0), bucket: 0 };
+}
+function bumpScope(sid, n){ initScope(sid); S.scope[sid].bucket += n; }
+
+setInterval(()=>{
+  let dirty = false;
+  for(const sid in S.scope){
+    const sc = S.scope[sid];
+    sc.hist.push(sc.bucket); sc.hist.shift(); sc.bucket = 0;
+    dirty = true;
+  }
+  if(dirty) for(const sid in S.scope) drawScope(sid);
+}, 500);
+
+function drawScope(sid){
+  const cv = document.getElementById('scope-'+sid);
+  if(!cv) return;
+  const sc = S.scope[sid]; if(!sc) return;
+  const svc = S.services.find(s=>s.sid===sid);
+  const dpr = window.devicePixelRatio || 1;
+  const w = 96, h = 30;
+  if(cv.width !== w*dpr){ cv.width = w*dpr; cv.height = h*dpr; }
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.clearRect(0,0,w,h);
+  const active = svc && (svc.status==='running' || svc.status==='starting' || svc.status==='external');
+  const color = svc?.status==='running' ? '#55e6a5' : svc?.status==='starting' ? '#ffb454'
+              : svc?.status==='external' ? '#a78bfa' : '#3a4a70';
+  // 基线
+  ctx.strokeStyle = 'rgba(120,150,255,.12)';
+  ctx.beginPath(); ctx.moveTo(0,h-3.5); ctx.lineTo(w,h-3.5); ctx.stroke();
+  const max = Math.max(4, ...sc.hist);
+  ctx.beginPath();
+  sc.hist.forEach((v,i)=>{
+    const x = (i/(sc.hist.length-1))*w;
+    const y = h-3.5 - (v/max)*(h-7);
+    i===0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
+  });
+  ctx.strokeStyle = color; ctx.lineWidth = 1.2;
+  ctx.shadowColor = color; ctx.shadowBlur = active ? 5 : 0;
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+}
+
+/* ---------- 磁盘 ---------- */
+async function loadDisk(){
+  try{
+    S.disks = await api('/api/disk');
+    const {percent, free} = S.disks;
+    const bar = document.getElementById('g-disk');
+    bar.style.width = percent + '%';
+    bar.classList.toggle('hot', percent >= 90);
+    document.getElementById('disk-text').textContent = ` ${percent}% · 余${fmtSize(free)}`;
+    renderDisk();
+  }catch(e){ /* 静默 */ }
+}
+function renderDisk(){
+  if(!S.disks) return;
+  // 重建前记录勾选状态并恢复（轮询重绘不应清空用户已勾选的清理项）
+  const checked = new Set([...document.querySelectorAll('#disk-body .dchk:checked')].map(c=>c.value));
+  const maxR = Math.max(1, ...Object.values(S.disks.repos).map(d=>d.size||0));
+  document.getElementById('disk-body').innerHTML = Object.entries(S.disks.repos).map(([repo, d])=>{
+    const state = d.cleaning ? '<span class="st-warn">◌ 清理中…</span>'
+      : d.scanning ? '<span class="st-warn">◌ 扫描中…</span>'
+      : d.exists ? '<span class="st-dim">READY</span>' : '<span class="st-dim">无 target</span>';
+    const blocks = 16, on = Math.round((d.size||0)/maxR*blocks);
+    const hot = (d.size||0)/maxR > 0.7;
+    return `<tr>
+      <td><input type="checkbox" class="chk dchk" value="${repo}" ${checked.has(repo)?'checked':''} ${d.cleaning?'disabled':''}></td>
+      <td><span class="repo-name">${repo}</span></td>
+      <td><div class="size-cell">
+        <span class="blocks">${Array.from({length:blocks},(_,i)=>`<i class="${i<on?(hot?'on hot':'on'):''}"></i>`).join('')}</span>
+        <span class="num">${fmtSize(d.size)}</span>
+      </div></td>
+      <td class="num st-dim">${fmtTime(d.scanned_at)}</td>
+      <td>${state}</td>
+      <td><button class="clean-btn abort" onclick="clean(['${repo}'])" ${d.cleaning?'disabled':''}>清理</button></td>
+    </tr>`;
+  }).join('');
+}
+function cleanSelectedDisk(){
+  const repos = [...document.querySelectorAll('#disk-body .dchk:checked')].map(c=>c.value);
+  return clean(repos);
+}
+async function clean(repos){
+  if(!repos.length) return toast('请先勾选仓库');
+  const total = repos.reduce((a,r)=>a+(S.disks.repos[r]?.size||0),0);
+  const ok = await askConfirm(`确定清理以下仓库的 target/ 目录？\n\n${repos.join('\n')}\n\n合计约 ${fmtSize(total)}，将执行 cargo clean，下次构建全量重编译。`);
+  if(!ok) return;
+  try{
+    const r = await postJson('/api/disk/clean', {repos});
+    toast('已开始 cargo clean，输出见日志抽屉','ok');
+    openLog(r.log_sid || CLEAN_SID);
+  }catch(e){ toast(e.message,'err'); }
+  setTimeout(loadDisk, 1500); setTimeout(loadDisk, 6000); setTimeout(loadDisk, 15000);
+}
+async function openDiskScan(){ try{ await api('/api/disk/scan',{method:'POST'}); toast('已触发重新扫描','ok'); }catch(e){ toast(e.message,'err'); } setTimeout(loadDisk,1500); }
+
+/* ---------- init ---------- */
+loadServices(); loadDisk();
+setInterval(loadServices, 3000);
+setInterval(loadDisk, 10000);
+
+/* ---------- 日志抽屉高度拖拽 ---------- */
+const DRAWER_MIN_H = 140;
+function drawerMaxH(){ return Math.round(innerHeight * 0.85); }
+function initDrawerResize(){
+  const drawer = document.getElementById('drawer'), grip = document.getElementById('dgrip');
+  // 恢复上次拖拽的高度（localStorage 记忆）
+  const saved = parseInt(localStorage.getItem('cmx_drawer_h') || '', 10);
+  if(saved >= DRAWER_MIN_H) drawer.style.height = Math.min(saved, drawerMaxH()) + 'px';
+  let dragging = false, startY = 0, startH = 0;
+  grip.addEventListener('mousedown', e => {
+    dragging = true; startY = e.clientY; startH = drawer.offsetHeight;
+    grip.classList.add('drag');
+    document.body.style.cursor = 'ns-resize'; document.body.style.userSelect = 'none';
+    e.preventDefault();
+  });
+  window.addEventListener('mousemove', e => {
+    if(!dragging) return;
+    // 抽屉底部固定：向上拖 → 增高
+    const h = Math.min(Math.max(DRAWER_MIN_H, startH + (startY - e.clientY)), drawerMaxH());
+    drawer.style.height = h + 'px';
+    if(S.autoscroll){ const b = document.getElementById('dbody'); b.scrollTop = b.scrollHeight; }
+  });
+  window.addEventListener('mouseup', () => {
+    if(!dragging) return;
+    dragging = false;
+    grip.classList.remove('drag');
+    document.body.style.cursor = ''; document.body.style.userSelect = '';
+    localStorage.setItem('cmx_drawer_h', String(drawer.offsetHeight));
+  });
+  grip.addEventListener('dblclick', () => {   // 双击复位默认高度
+    drawer.style.height = '';
+    localStorage.removeItem('cmx_drawer_h');
+  });
+}
+initDrawerResize();
+
+/* ---------- 日志控制台右键菜单：清除日志 ---------- */
+const logctx = document.getElementById('logctx');
+function hideLogCtx(){ logctx.classList.remove('show'); }
+document.getElementById('dbody').addEventListener('contextmenu', e => {
+  if(!S.activeTab) return;
+  e.preventDefault();
+  logctx.classList.add('show');
+  // 贴边防溢出
+  logctx.style.left = Math.min(e.clientX, innerWidth  - logctx.offsetWidth  - 8) + 'px';
+  logctx.style.top  = Math.min(e.clientY, innerHeight - logctx.offsetHeight - 8) + 'px';
+});
+document.getElementById('logctx-clear').addEventListener('click', async () => {
+  const sid = S.activeTab;
+  hideLogCtx();
+  if(!sid) return;
+  try{
+    await postJson(`/api/services/${sid}/logs/clear`);
+    const b = document.getElementById('dbody');
+    b.innerHTML = '<div class="empty">// 已清除，等待新输出…</div>';
+    S.cursors[sid] = 0; S.hiddenCount = 0; updateDbottom();
+    toast(`已清除 ${sid} 日志缓冲`,'ok');
+  }catch(err){ toast(err.message,'err'); }
+});
+window.addEventListener('click', hideLogCtx);
+window.addEventListener('blur', hideLogCtx);
+window.addEventListener('keydown', e => { if(e.key === 'Escape') hideLogCtx(); });
+
+/* ---------- 系统 CPU / 内存（5s）---------- */
+function fmtMB(mb){ return mb>=1024 ? (mb/1024).toFixed(1)+'G' : Math.round(mb)+'M'; }
+async function pollSystem(){
+  try{
+    const d = await api('/api/system');
+    const cpu = d.cpu==null?null:d.cpu, mem = d.mem_pct==null?null:d.mem_pct;
+    document.getElementById('t-cpu').textContent = cpu==null?'--':` ${cpu.toFixed(0)}%`;
+    document.getElementById('t-mem').textContent = mem==null?'--':
+      ` ${mem.toFixed(0)}% · ${(d.mem_used/2**30).toFixed(1)}/${(d.mem_total/2**30).toFixed(0)}G`;
+    const gc=document.getElementById('g-cpu'), gm=document.getElementById('g-mem');
+    gc.style.width=(cpu||0)+'%';  gc.classList.toggle('hot', (cpu||0)>=85);
+    gm.style.width=(mem||0)+'%';  gm.classList.toggle('hot', (mem||0)>=90);
+    const svc = d.services||{};
+    for(const el of document.querySelectorAll('.pm')){
+      const sid = el.id.slice(3), v = svc[sid];
+      el.textContent = v ? `CPU ${v.cpu}% · ${fmtMB(v.mem_mb)}` : '';
+    }
+  }catch(e){ /* 忽略瞬时错误 */ }
+}
+setInterval(pollSystem, 5000);
+setTimeout(pollSystem, 600);
+</script>
+</body>
+</html>
