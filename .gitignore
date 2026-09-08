@@ -1,0 +1,3 @@
+logs/
+.venv/
+/launcher_state.json
