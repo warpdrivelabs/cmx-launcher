@@ -32,6 +32,7 @@ from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 try:
@@ -748,6 +749,15 @@ def index():
     return (WEB_DIR / "index.html").read_text("utf-8")
 
 
+@app.get("/monitor", response_class=HTMLResponse)
+def monitor():
+    return (WEB_DIR / "monitor.html").read_text("utf-8")
+
+
+# 本地打包的前端资产（uPlot 等；运行时纯本地，不走 CDN）
+app.mount("/vendor", StaticFiles(directory=str(WEB_DIR / "vendor")), name="vendor")
+
+
 @app.post("/api/rescan")
 def api_rescan():
     reg = reload_registry()
@@ -755,13 +765,23 @@ def api_rescan():
             "disk_repos": _disk_repos}
 
 
-# ---------------------------------------------------------------- CPU / 内存指标
-_stats: dict = {"cpu": None, "mem_pct": None, "mem_used": None, "mem_total": None, "services": {}}
+# ---------------------------------------------------------------- CPU / 内存 / IO 指标
+_stats: dict = {"cpu": None, "mem_pct": None, "mem_used": None, "mem_total": None,
+                "disk_r": None, "disk_w": None, "load": None, "services": {}}
+
+# 监控页时序历史（内存环缓，重启清零）+ IO 差分基线
+_HIST_N = 180                                       # 2s × 180 ≈ 6 分钟窗
+_hist_lock = threading.Lock()
+_hist_sys: deque = deque(maxlen=_HIST_N)            # 每帧 {t,cpu,memPct,memUsed,memTotal,diskR,diskW,load}
+_hist_svc: dict[str, deque] = {}                    # sid -> deque(帧 {t,cpu,mem,ioR,ioW})
+_io_prev: dict[str, tuple] = {}                     # sid -> (read_bytes累计, write_bytes累计, ts)
+_sys_io_prev: Optional[tuple] = None               # (read_bytes, write_bytes, ts)
+_io_supported: Optional[bool] = None               # 每进程 IO 计数器本平台是否可用（macOS 不支持）
 
 
 def _sample_service_stats(sid: str) -> Optional[dict]:
-    """统计单个服务进程树（含子进程）的 CPU% 与内存 RSS。我们启动的取句柄 pid；
-    外部运行的按端口定位 PID。"""
+    """统计单个服务进程树（含子进程）的 CPU% / 内存 RSS / 线程 / 句柄 / 磁盘 IO 速率。
+    我们启动的取句柄 pid；外部运行的按端口定位 PID。IO 计数器在 macOS 不支持 → io_r/io_w=None。"""
     if psutil is None:
         return None
     p = _procs.get(sid)
@@ -777,32 +797,95 @@ def _sample_service_stats(sid: str) -> Optional[dict]:
         procs = [psutil.Process(root), *psutil.Process(root).children(recursive=True)]
     except psutil.Error:
         return None
-    cpu, mem = 0.0, 0
+    cpu, mem, threads, fds = 0.0, 0, 0, 0
+    io_r_cum, io_w_cum, io_ok = 0, 0, False
     for x in procs:
         try:
             cpu += x.cpu_percent(interval=None)
             mem += x.memory_info().rss
+            threads += x.num_threads()
+            try:
+                fds += x.num_fds() if hasattr(x, "num_fds") else x.num_handles()
+            except (psutil.Error, AttributeError):
+                pass
+            try:                                    # macOS 无每进程 IO 计数器 → 跳过
+                io = x.io_counters()
+                io_r_cum += io.read_bytes
+                io_w_cum += io.write_bytes
+                io_ok = True
+            except (psutil.Error, AttributeError, NotImplementedError):
+                pass
         except psutil.Error:
             continue
-    return {"cpu": round(cpu, 1), "mem_mb": round(mem / 1048576, 1)}
+    now = time.time()
+    io_r = io_w = None
+    if io_ok:
+        prev = _io_prev.get(sid)
+        _io_prev[sid] = (io_r_cum, io_w_cum, now)
+        if prev and now > prev[2]:                  # 差分累计字节 → B/s（首帧无基线跳过）
+            dt = now - prev[2]
+            io_r = max(0.0, (io_r_cum - prev[0]) / dt)
+            io_w = max(0.0, (io_w_cum - prev[1]) / dt)
+    return {"cpu": round(cpu, 1), "mem_mb": round(mem / 1048576, 1),
+            "threads": threads, "fds": fds,
+            "io_r": round(io_r) if io_r is not None else None,
+            "io_w": round(io_w) if io_w is not None else None}
 
 
 def _stats_loop():
-    """后台每 2s 采样系统与各服务进程指标，供 API 读缓存（不阻塞请求）。"""
+    """后台每 2s 采样系统与各服务进程指标 + 追加时序历史，供 API 读缓存（不阻塞请求）。"""
+    global _sys_io_prev, _io_supported
     if psutil is None:
         return
-    psutil.cpu_percent(interval=None)        # 首次调用预热
+    psutil.cpu_percent(interval=None)               # 首次调用预热
+    try:                                            # 探测每进程 IO 计数器是否可用（本工具自身进程）
+        psutil.Process().io_counters()
+        _io_supported = True
+    except Exception:
+        _io_supported = False
+    try:
+        dio = psutil.disk_io_counters()
+        _sys_io_prev = (dio.read_bytes, dio.write_bytes, time.time()) if dio else None
+    except Exception:
+        _sys_io_prev = None
     while True:
         try:
+            now = time.time()
             for sid in list(_registry):
                 s = _sample_service_stats(sid)
                 if s:
                     _stats["services"][sid] = s
+                    with _hist_lock:
+                        dq = _hist_svc.setdefault(sid, deque(maxlen=_HIST_N))
+                        dq.append({"t": now, "cpu": s["cpu"], "mem": s["mem_mb"],
+                                   "ioR": s["io_r"], "ioW": s["io_w"]})
                 else:
                     _stats["services"].pop(sid, None)
             vm = psutil.virtual_memory()
-            _stats.update(cpu=psutil.cpu_percent(interval=None), mem_pct=vm.percent,
-                          mem_used=vm.used, mem_total=vm.total)
+            disk_r = disk_w = None                   # 系统级磁盘 IO 速率（全平台可用）
+            try:
+                dio = psutil.disk_io_counters()
+                if dio and _sys_io_prev and now > _sys_io_prev[2]:
+                    dt = now - _sys_io_prev[2]
+                    disk_r = max(0.0, (dio.read_bytes - _sys_io_prev[0]) / dt)
+                    disk_w = max(0.0, (dio.write_bytes - _sys_io_prev[1]) / dt)
+                if dio:
+                    _sys_io_prev = (dio.read_bytes, dio.write_bytes, now)
+            except Exception:
+                pass
+            load = None
+            try:
+                load = round(os.getloadavg()[0], 2)
+            except (OSError, AttributeError):        # Windows 无 getloadavg
+                pass
+            cpu = psutil.cpu_percent(interval=None)
+            _stats.update(cpu=cpu, mem_pct=vm.percent, mem_used=vm.used, mem_total=vm.total,
+                          disk_r=disk_r and round(disk_r), disk_w=disk_w and round(disk_w), load=load)
+            with _hist_lock:
+                _hist_sys.append({"t": now, "cpu": cpu, "memPct": vm.percent,
+                                  "memUsed": vm.used, "memTotal": vm.total,
+                                  "diskR": disk_r and round(disk_r), "diskW": disk_w and round(disk_w),
+                                  "load": load})
         except Exception:
             pass
         time.sleep(2)
@@ -811,6 +894,60 @@ def _stats_loop():
 @app.get("/api/system")
 def api_system():
     return _stats
+
+
+@app.get("/api/metrics")
+def api_metrics():
+    """监控页数据源：系统 + 各服务的当前值 + 时序历史（列式数组，uPlot 直接吃）。"""
+    if psutil is None:
+        return {"sampleInterval": 2, "ioSupported": False, "psutil": False,
+                "system": {"cur": {}, "series": {"t": []}}, "services": {}}
+    if not _registry:
+        reload_registry()
+    with _hist_lock:
+        sys_frames = list(_hist_sys)
+        svc_frames = {sid: list(dq) for sid, dq in _hist_svc.items()}
+
+    def col(frames, key):
+        return [f.get(key) for f in frames]
+
+    sys_series = {
+        "t": [round(f["t"], 1) for f in sys_frames],
+        "cpu": col(sys_frames, "cpu"), "memPct": col(sys_frames, "memPct"),
+        "diskR": col(sys_frames, "diskR"), "diskW": col(sys_frames, "diskW"),
+    }
+    services = {}
+    for sid, info in dict(_registry).items():
+        frames = svc_frames.get(sid, [])
+        cur = _stats["services"].get(sid, {})
+        p = _procs.get(sid)
+        if p and p.alive():                          # 轻量状态：不做端口探测（避免每 2s 阻塞）
+            status = "running"
+        elif sid in _stats["services"]:
+            status = "external"
+        else:
+            status = "stopped"
+        services[sid] = {
+            "name": info["name"], "kind": info.get("kind", "rust"),
+            "status": status, "pid": (p.popen.pid if (p and p.alive()) else None),
+            "cur": cur,
+            "series": {
+                "t": [round(f["t"], 1) for f in frames],
+                "cpu": col(frames, "cpu"), "mem": col(frames, "mem"),
+                "ioR": col(frames, "ioR"), "ioW": col(frames, "ioW"),
+            },
+        }
+    return {
+        "sampleInterval": 2, "ioSupported": bool(_io_supported), "psutil": True,
+        "system": {
+            "cur": {"cpu": _stats.get("cpu"), "memPct": _stats.get("mem_pct"),
+                    "memUsed": _stats.get("mem_used"), "memTotal": _stats.get("mem_total"),
+                    "diskR": _stats.get("disk_r"), "diskW": _stats.get("disk_w"),
+                    "load": _stats.get("load")},
+            "series": sys_series,
+        },
+        "services": services,
+    }
 
 
 _prev_status: dict[str, str] = {}   # 上轮状态，用于捕捉 stopped/starting → running 转变

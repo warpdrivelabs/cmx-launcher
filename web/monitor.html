@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CMX 资源监控</title>
+<link rel="stylesheet" href="/vendor/uPlot.min.css">
+<style>
+/* ============================================================
+   CMX LAUNCHER · 资源监控（RESOURCE MONITOR）
+   复用主控制台调色板：midnight navy / instrument amber / phosphor green
+   ============================================================ */
+:root{
+  --bg:#0a0f1e; --bg-deep:#070b16; --panel:#101830; --panel2:#141d38;
+  --line:#22304f; --line-bright:#33477a;
+  --ink:#dbe4fa; --ink-dim:#7d8db3; --ink-faint:#4b5a7d;
+  --amber:#ffb454; --amber-deep:#e08f1f;
+  --green:#55e6a5; --red:#ff6b81; --violet:#a78bfa; --cyan:#5ad7ff;
+  --mono:"JetBrains Mono","Cascadia Code","Fira Code",ui-monospace,Consolas,"Courier New",monospace;
+  --sans:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scrollbar-color:var(--line) var(--bg-deep)}
+body{
+  background:
+    radial-gradient(1200px 600px at 75% -10%, rgba(90,120,220,.10), transparent 60%),
+    radial-gradient(900px 500px at 10% 110%, rgba(255,180,84,.05), transparent 55%),
+    var(--bg);
+  color:var(--ink); font:14px/1.5 var(--sans); min-height:100vh; padding-bottom:60px;
+}
+body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
+  background:
+    repeating-linear-gradient(0deg, rgba(120,150,255,.028) 0 1px, transparent 1px 44px),
+    repeating-linear-gradient(90deg, rgba(120,150,255,.028) 0 1px, transparent 1px 44px);}
+a{color:var(--cyan);text-decoration:none}
+header{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:16px;flex-wrap:wrap;
+  padding:12px 22px;background:linear-gradient(180deg,rgba(16,24,48,.96),rgba(10,15,30,.92));
+  border-bottom:1px solid var(--line-bright);backdrop-filter:blur(6px)}
+.brand{display:flex;align-items:baseline;gap:10px}
+.brand .mark{color:var(--amber);font-size:18px}
+.brand h1{font:700 16px var(--mono);letter-spacing:.06em}
+.brand h1 b{color:var(--cyan);font-weight:700;margin-left:6px}
+.brand .sub{color:var(--ink-faint);font:600 10px var(--mono);letter-spacing:.14em}
+.spring{flex:1}
+.ctl{display:flex;align-items:center;gap:6px;font:600 11px var(--mono);letter-spacing:.05em;color:var(--ink-dim)}
+.seg{display:inline-flex;border:1px solid var(--line-bright);border-radius:3px;overflow:hidden}
+.seg button{background:var(--bg-deep);color:var(--ink-dim);border:0;padding:5px 10px;font:600 11px var(--mono);cursor:pointer}
+.seg button.on{background:var(--panel2);color:var(--cyan)}
+button.ghost{background:linear-gradient(180deg,var(--panel2),var(--panel));border:1px solid var(--line-bright);
+  color:var(--ink);border-radius:3px;padding:6px 12px;font:600 11px var(--mono);letter-spacing:.06em;cursor:pointer}
+.badge{font:600 10px var(--mono);letter-spacing:.08em;padding:3px 8px;border-radius:3px;border:1px solid var(--line-bright);color:var(--ink-dim)}
+.badge.ok{color:var(--green);border-color:rgba(85,230,165,.4)}
+.badge.warn{color:var(--amber);border-color:rgba(255,180,84,.4)}
+
+/* 系统概览条 */
+.sys{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;padding:18px 22px 6px}
+.metric{background:linear-gradient(180deg,var(--panel),var(--bg-deep));border:1px solid var(--line);border-radius:6px;padding:12px 14px}
+.metric .k{font:600 10px var(--mono);letter-spacing:.14em;color:var(--ink-faint)}
+.metric .v{font:700 24px var(--mono);margin-top:4px}
+.metric .v small{font-size:12px;color:var(--ink-dim);font-weight:600}
+.metric .sub2{font:600 11px var(--mono);color:var(--ink-dim);margin-top:2px}
+.bar{height:5px;margin-top:8px;background:var(--bg-deep);border:1px solid var(--line-bright);border-radius:3px;overflow:hidden}
+.bar>i{display:block;height:100%;transition:width .4s}
+
+.sys-charts{display:grid;grid-template-columns:1fr 1fr;gap:14px;padding:6px 22px 4px}
+@media(max-width:900px){.sys-charts{grid-template-columns:1fr}}
+.chartbox{background:linear-gradient(180deg,var(--panel),var(--bg-deep));border:1px solid var(--line);border-radius:6px;padding:10px 12px 4px}
+.chartbox h3{font:600 11px var(--mono);letter-spacing:.1em;color:var(--ink-dim);margin-bottom:6px;display:flex;gap:10px;align-items:center}
+.lg{font:600 10px var(--mono)}
+.lg i{display:inline-block;width:9px;height:2px;vertical-align:middle;margin-right:4px}
+
+.section-title{display:flex;align-items:baseline;gap:12px;padding:16px 22px 4px}
+.section-title h2{font:700 13px var(--mono);letter-spacing:.12em;color:var(--amber)}
+.section-title .hint{color:var(--ink-faint);font:600 10px var(--mono);letter-spacing:.06em}
+
+/* 每服务卡片网格 */
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px;padding:8px 22px}
+.card{background:linear-gradient(180deg,var(--panel),var(--bg-deep));border:1px solid var(--line);border-radius:6px;padding:12px 14px;transition:border-color .2s}
+.card.running{border-color:rgba(85,230,165,.32)}
+.card.stopped{opacity:.62}
+.card .top{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.dot{width:8px;height:8px;border-radius:50%;flex:none;background:var(--ink-faint)}
+.dot.running{background:var(--green);box-shadow:0 0 8px rgba(85,230,165,.7)}
+.dot.external{background:var(--violet)}
+.dot.stopped{background:var(--ink-faint)}
+.card .nm{font:700 13px var(--sans)}
+.card .pid{font:600 10px var(--mono);color:var(--ink-faint);margin-left:auto}
+.readout{display:flex;gap:14px;flex-wrap:wrap;font:600 11px var(--mono);color:var(--ink-dim);margin:2px 0 8px}
+.readout b{color:var(--ink);font-weight:700}
+.readout .cpu b{color:var(--cyan)} .readout .mem b{color:var(--amber)}
+.io-na{color:var(--ink-faint);font-style:italic}
+.empty{padding:40px;text-align:center;color:var(--ink-faint);font:600 12px var(--mono)}
+
+/* uPlot 暗色适配 */
+.uplot{font-family:var(--mono)}
+.u-legend{font:600 10px var(--mono);color:var(--ink-dim)}
+.u-title{color:var(--ink)}
+.uplot .u-axis{color:var(--ink-faint)}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <span class="mark">◢</span>
+    <h1>CMX<b>资源监控</b></h1>
+    <span class="sub">RESOURCE MONITOR</span>
+  </div>
+  <span class="spring"></span>
+  <div class="ctl">窗口
+    <div class="seg" id="winseg">
+      <button data-w="60">1m</button>
+      <button data-w="300" class="on">5m</button>
+      <button data-w="99999">6m</button>
+    </div>
+  </div>
+  <button class="ghost" id="pausebtn" onclick="togglePause()">⏸ 暂停</button>
+  <label class="ctl"><input type="checkbox" id="runonly" onchange="render(LAST)"> 仅运行中</label>
+  <span class="badge" id="io-badge">IO --</span>
+  <a class="ghost" href="/">← 控制台</a>
+</header>
+
+<div class="sys">
+  <div class="metric"><div class="k">CPU 整机</div><div class="v"><span id="m-cpu">--</span><small>%</small></div>
+    <div class="bar"><i id="b-cpu" style="width:0;background:var(--cyan)"></i></div></div>
+  <div class="metric"><div class="k">内存 MEM</div><div class="v"><span id="m-mem">--</span><small>%</small></div>
+    <div class="sub2" id="m-mem-sub">-- / --</div>
+    <div class="bar"><i id="b-mem" style="width:0;background:var(--amber)"></i></div></div>
+  <div class="metric"><div class="k">磁盘 IO（整机）</div><div class="v" style="font-size:15px" id="m-disk">-- / --</div>
+    <div class="sub2">读 / 写 速率</div></div>
+  <div class="metric"><div class="k">负载 LOAD</div><div class="v" id="m-load">--</div>
+    <div class="sub2">1 分钟平均</div></div>
+</div>
+
+<div class="sys-charts">
+  <div class="chartbox">
+    <h3>整机 CPU / 内存
+      <span class="lg"><i style="background:var(--cyan)"></i>CPU%</span>
+      <span class="lg"><i style="background:var(--amber)"></i>内存%</span></h3>
+    <div id="sysc-cpumem"></div>
+  </div>
+  <div class="chartbox">
+    <h3>整机磁盘 IO
+      <span class="lg"><i style="background:var(--green)"></i>读</span>
+      <span class="lg"><i style="background:var(--red)"></i>写</span></h3>
+    <div id="sysc-io"></div>
+  </div>
+</div>
+
+<div class="section-title">
+  <h2>各微服务资源</h2>
+  <span class="hint" id="svc-hint">进程树 CPU / 内存 / 线程 / 磁盘 IO · 每 2 秒采样</span>
+</div>
+<div class="grid" id="grid"></div>
+<div class="empty" id="empty" style="display:none">// 未装 psutil，指标不可用（pip install psutil 后重启 launcher）</div>
+
+<script src="/vendor/uPlot.iife.min.js"></script>
+<script>
+/* ---------- 工具 ---------- */
+const $ = s => document.querySelector(s);
+function fmtBps(v){ if(v==null) return "--"; if(v<1024) return v.toFixed(0)+" B/s";
+  if(v<1048576) return (v/1024).toFixed(1)+" KB/s"; return (v/1048576).toFixed(2)+" MB/s"; }
+function fmtBytes(v){ if(v==null) return "--"; const g=v/1073741824; if(g>=1) return g.toFixed(1)+" GB";
+  return (v/1048576).toFixed(0)+" MB"; }
+function fmtMB(v){ if(v==null) return "--"; if(v>=1024) return (v/1024).toFixed(2)+" GB"; return v.toFixed(0)+" MB"; }
+const COL={cpu:"#5ad7ff",mem:"#ffb454",r:"#55e6a5",w:"#ff6b81"};
+const AXIS="#4b5a7d", GRID="rgba(120,150,255,.10)";
+
+/* ---------- 状态 ---------- */
+let WIN=300, PAUSED=false, LAST=null;
+const charts={};      // sid -> {u, box}
+let sysCpuMem=null, sysIo=null;
+
+/* ---------- uPlot 工厂 ---------- */
+function baseAxes(){ return [
+  {stroke:AXIS, grid:{stroke:GRID,width:1}, ticks:{stroke:GRID}, size:34,
+   values:(u,vs)=>vs.map(v=>{const d=new Date(v*1000);return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')+':'+String(d.getSeconds()).padStart(2,'0');})},
+]; }
+function mkChart(el, series, opts={}){
+  const w = el.clientWidth || 360;
+  const o = {
+    width:w, height:opts.height||130, ms:1e3,
+    scales:{x:{time:true}},
+    legend:{show:false},
+    cursor:{points:{size:5}, focus:{prox:20}},
+    axes: baseAxes().concat(opts.axes||[]),
+    series:[{}].concat(series),
+  };
+  return new uPlot(o, [[],[]], el);
+}
+// 服务卡片图：CPU%（左轴 y）+ 内存 MB（右轴 mem）
+function mkServiceChart(el){
+  return mkChart(el, [
+    {label:"CPU%", scale:"y", stroke:COL.cpu, width:1.5, points:{show:false}},
+    {label:"内存MB", scale:"mem", stroke:COL.mem, width:1.5, points:{show:false}},
+  ], {height:120, axes:[
+    {scale:"y", side:3, stroke:AXIS, grid:{show:false}, size:38, values:(u,vs)=>vs.map(v=>v)},
+    {scale:"mem", side:1, stroke:AXIS, grid:{show:false}, size:44, values:(u,vs)=>vs.map(v=>v)},
+  ]});
+}
+
+/* ---------- 时间窗裁剪 ---------- */
+function slice(series, keys){
+  const t=series.t||[]; let i0=0;
+  if(WIN<9999 && t.length){ const cut=t[t.length-1]-WIN; while(i0<t.length && t[i0]<cut) i0++; }
+  const out=[t.slice(i0)];
+  for(const k of keys) out.push((series[k]||[]).slice(i0));
+  return out;
+}
+
+/* ---------- 渲染 ---------- */
+function render(d){
+  if(!d) return; LAST=d;
+  if(d.psutil===false){ $("#empty").style.display="block"; $("#grid").style.display="none"; return; }
+  // IO 能力徽标
+  const iob=$("#io-badge");
+  if(d.ioSupported){ iob.textContent="每服务 IO ✓"; iob.className="badge ok"; }
+  else{ iob.textContent="每服务 IO 本平台不可用（整机 IO 见上）"; iob.className="badge warn"; }
+
+  // 系统概览
+  const c=d.system.cur||{};
+  $("#m-cpu").textContent = c.cpu==null?"--":c.cpu.toFixed(0);
+  $("#b-cpu").style.width = (c.cpu==null?0:Math.min(100,c.cpu))+"%";
+  $("#m-mem").textContent = c.memPct==null?"--":c.memPct.toFixed(0);
+  $("#b-mem").style.width = (c.memPct||0)+"%";
+  $("#m-mem-sub").textContent = fmtBytes(c.memUsed)+" / "+fmtBytes(c.memTotal);
+  $("#m-disk").innerHTML = "↓"+fmtBps(c.diskR)+" &nbsp; ↑"+fmtBps(c.diskW);
+  $("#m-load").textContent = c.load==null?"--":c.load;
+
+  // 系统时序
+  const ss=d.system.series;
+  if(!sysCpuMem){ sysCpuMem=mkChart($("#sysc-cpumem"),[
+      {label:"CPU%",stroke:COL.cpu,width:1.5,points:{show:false}},
+      {label:"内存%",stroke:COL.mem,width:1.5,points:{show:false}},
+    ],{axes:[{stroke:AXIS,grid:{show:false},size:34}]}); }
+  sysCpuMem.setData(slice(ss,["cpu","memPct"]));
+  if(!sysIo){ sysIo=mkChart($("#sysc-io"),[
+      {label:"读",stroke:COL.r,width:1.5,points:{show:false}},
+      {label:"写",stroke:COL.w,width:1.5,points:{show:false}},
+    ],{axes:[{stroke:AXIS,grid:{show:false},size:52,values:(u,vs)=>vs.map(fmtBps)}]}); }
+  sysIo.setData(slice(ss,["diskR","diskW"]));
+
+  // 服务卡片：对账（新增/移除）
+  const svcs=d.services||{};
+  const runOnly=$("#runonly").checked;
+  let sids=Object.keys(svcs).sort((a,b)=>{
+    const A=svcs[a],B=svcs[b]; const r=(x)=>x.status==="running"?0:x.status==="external"?1:2;
+    return r(A)-r(B) || A.name.localeCompare(B.name);
+  });
+  if(runOnly) sids=sids.filter(s=>svcs[s].status!=="stopped");
+  const grid=$("#grid"); const seen=new Set(sids);
+  // 移除消失的
+  for(const sid of Object.keys(charts)){ if(!seen.has(sid)){ charts[sid].u.destroy(); charts[sid].card.remove(); delete charts[sid]; } }
+  $("#svc-hint").textContent = `${sids.length} 个服务 · 进程树 CPU / 内存 / 线程 / 磁盘 IO · 每 ${d.sampleInterval||2} 秒采样`;
+
+  for(const sid of sids){
+    const s=svcs[sid]; const cur=s.cur||{};
+    let ent=charts[sid];
+    if(!ent){
+      const card=document.createElement('div'); card.className='card'; card.id='card-'+sid;
+      card.innerHTML=`<div class="top"><span class="dot"></span><span class="nm"></span><span class="pid"></span></div>
+        <div class="readout">
+          <span class="cpu">CPU <b class="r-cpu">--</b>%</span>
+          <span class="mem">内存 <b class="r-mem">--</b></span>
+          <span>线程 <b class="r-th">--</b></span>
+          <span class="r-io"></span>
+        </div>
+        <div class="chart"></div>`;
+      grid.appendChild(card);
+      const u=mkServiceChart(card.querySelector('.chart'));
+      ent=charts[sid]={u,card};
+    }
+    const card=ent.card;
+    card.className='card '+(s.status||'stopped');
+    card.querySelector('.dot').className='dot '+(s.status||'stopped');
+    card.querySelector('.nm').textContent=s.name;
+    card.querySelector('.pid').textContent = s.pid?('pid '+s.pid):(s.status==='external'?'外部':'—');
+    card.querySelector('.r-cpu').textContent = cur.cpu==null?'--':cur.cpu;
+    card.querySelector('.r-mem').textContent = fmtMB(cur.mem_mb);
+    card.querySelector('.r-th').textContent = cur.threads==null?'--':cur.threads;
+    const rio=card.querySelector('.r-io');
+    if(d.ioSupported){ rio.className='r-io'; rio.innerHTML = (cur.io_r==null&&cur.io_w==null)?'IO --'
+      :('IO ↓<b>'+fmtBps(cur.io_r)+'</b> ↑<b>'+fmtBps(cur.io_w)+'</b>'); }
+    else { rio.className='r-io io-na'; rio.textContent='IO：本平台不可用'; }
+    ent.u.setData(slice(s.series,["cpu","mem"]));
+  }
+  $("#empty").style.display = sids.length?'none':(runOnly?'none':'block');
+  if(!sids.length && !runOnly) $("#empty").textContent='// 暂无已发现的服务';
+}
+
+/* ---------- 交互 ---------- */
+function togglePause(){ PAUSED=!PAUSED; $("#pausebtn").textContent=PAUSED?"▶ 继续":"⏸ 暂停"; if(!PAUSED) poll(); }
+$("#winseg").addEventListener('click',e=>{
+  const b=e.target.closest('button'); if(!b) return;
+  WIN=+b.dataset.w; [...$("#winseg").children].forEach(x=>x.classList.toggle('on',x===b));
+  if(LAST) render(LAST);
+});
+function resizeAll(){
+  const rz=(u,el)=>{ if(u&&el&&el.clientWidth) u.setSize({width:el.clientWidth,height:u.height}); };
+  rz(sysCpuMem,$("#sysc-cpumem")); rz(sysIo,$("#sysc-io"));
+  for(const sid in charts){ const el=charts[sid].card.querySelector('.chart'); rz(charts[sid].u,el); }
+}
+let rzT; window.addEventListener('resize',()=>{clearTimeout(rzT);rzT=setTimeout(resizeAll,150);});
+
+/* ---------- 轮询 ---------- */
+async function poll(){
+  if(PAUSED) return;
+  try{ const r=await fetch('/api/metrics'); render(await r.json()); }
+  catch(e){ /* 忽略瞬时错误，下轮重试 */ }
+}
+poll();
+setInterval(poll,2000);
+</script>
+</body>
+</html>
