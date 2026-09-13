@@ -570,8 +570,10 @@ def status_of(sid: str) -> dict:
                 _save_state()
                 port = dp
         url = f"http://127.0.0.1:{port}" if port else None
-        # 与 rust 分支一致：不依赖本工具进程句柄也探测端口（识别外部运行的 vite）
-        listening = port_listening(port) if port else False
+        # 外部运行判定只信本服务实际观测过的端口（启动日志解析 / 进程树探测 / 历史记录）：
+        # 默认 5173 是所有 vite 应用的公共兜底值，可能被其它前端应用占用，据它判定会张冠李戴
+        observed = (p.actual_port if p else None) or settings.get("port")
+        listening = port_listening(observed) if observed else False
     else:
         env_path = _env_path(sid)
         if env_path.exists():
@@ -590,10 +592,14 @@ def status_of(sid: str) -> dict:
     if p and p.alive():
         item.update(running=True, pid=p.popen.pid, uptime=int(time.time() - p.started_at),
                     status="running" if listening else "starting")
+    elif listening:
+        # 端口被非本工具进程占用 → 外部运行（可停止/重启接管）。判定不被历史 Proc 掩盖：
+        # 本工具曾启动过的服务退出后（Proc 仍留 _procs 供日志查看），只要配置端口仍在
+        # 监听就说明是外部实例或孤儿子进程，按端口定位 PID 展示并支持接管
+        ext_pids = _pids_of_port(port)
+        item.update(status="external", running=True, pid=ext_pids[0] if ext_pids else None)
     elif p is not None:
         item["exit_code"] = p.exit_code
-    elif listening:
-        item.update(status="external", running=True)   # 端口被外部进程占用
     return item
 
 
